@@ -5,79 +5,99 @@ import { Send, Bot, User, Loader2, Database, Link as LinkIcon } from 'lucide-rea
 export default function App() {
   const [messages, setMessages] = useState([
     {
-      id: 1,
-      role: 'bot',
-      text: "Welcome to Project Samarth. I am an intelligent assistant designed to answer complex questions about India's agricultural economy and its relationship with climate patterns, using live data sources.",
-      sources: [],
-    },
+      role: 'assistant',
+      content: "Welcome to Project Samarth. Ask me complex questions about India's agricultural economy and climate patterns.",
+      sources: []
+    }
   ]);
-  const [input, setInput] = useState('');
+  const [query, setQuery] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const chatEndRef = useRef(null);
+  const messagesEndRef = useRef(null);
 
-  // --- System Instruction for the LLM ---
-  // This guides the AI's persona, capabilities, and response format.
+  const apiKey = ""; // Per instructions, leave empty.
+  const apiUrl = `https://generativela-7031-dev.ai-proxy-prod.upl-gcp-public.ggr-dev.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+
+  // System instruction for the AI
   const systemPrompt = `
-    You are "Project Samarth," an advanced AI assistant.
-    
+    You are "Project Samarth," an expert AI assistant for analyzing Indian public data.
     Your mission is to answer complex, natural language questions about India's agricultural economy and its relationship with climate patterns.
     
-    You MUST adhere to the following rules:
-    1.  **Source Information:** Your primary goal is to find and synthesize information from official Indian government portals, especially 'data.gov.in', as well as from the Ministry of Agriculture & Farmers Welfare and the India Meteorological Department (IMD). Use your search tool extensively to find this data.
-    2.  **Accuracy & Traceability:** You MUST provide accurate, data-backed answers.
-    3.  **Cite All Sources:** For EVERY piece of data, statistic, or claim you make, you MUST cite the source. List all sources clearly at the end of your response. If you cannot find a specific source for a claim, you must state that.
-    4.  **Synthesize Answers:** Do not just list data. You must analyze and synthesize information from multiple sources to provide a coherent, comprehensive answer to the user's question, especially when it requires correlating agricultural production with climate data.
-    5.  **Handle Ambiguity:** If a question is unclear or data is unavailable, state that clearly rather than providing an inaccurate answer.
-    6.  **Persona:** You are a professional, accurate, and helpful policy and research assistant.
+    RULES:
+    1.  **Source Data:** Your primary goal is to find and synthesize information from official Indian government portals. You MUST prioritize data from 'data.gov.in', the Ministry of Agriculture & Farmers Welfare ('agriwelfare.gov.in'), and the India Meteorological Department ('imd.gov.in').
+    2.  **Use Search:** You MUST use the Google Search tool to find live, real-time data to answer questions. Do not make up data or use old knowledge.
+    3.  **Synthesize:** Answer the user's question directly. Do not just list search results. Synthesize information from multiple sources to form a single, coherent answer.
+    4.  **Cite Sources (CRITICAL):** For EVERY data point, statistic, or claim you make, you MUST cite the specific dataset, report, or page it came from. List these as "Sources" with a title and URL at the end of your response.
+    5.  **Handle Inconsistency:** If data sources are inconsistent or unavailable, state that clearly rather than providing an inaccurate answer.
+    6.  **Persona:** You are an expert policy advisor's assistant. Your tone is formal, data-driven, and precise.
   `;
 
-  // --- Scroll to bottom of chat ---
+  // Function to scroll to the bottom of the chat
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    scrollToBottom();
   }, [messages]);
 
   // --- API Call Function ---
-  const callGeminiAPI = async (chatHistory) => {
+  const handleSend = async () => {
+    if (!query.trim()) return;
+
+    const userMessage = { role: 'user', content: query, sources: [] };
+    setMessages(prev => [...prev, userMessage]);
+    setQuery('');
     setIsLoading(true);
-    const apiKey = ""; // API key is handled by the environment
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
-
-    const userQuery = chatHistory[chatHistory.length - 1].parts[0].text;
-
-    const payload = {
-      contents: chatHistory,
-      systemInstruction: {
-        parts: [{ text: systemPrompt }],
-      },
-      tools: [{ "google_search": {} }], // Enable Google Search grounding
-    };
 
     try {
-      // Exponential backoff for retries
+      // Construct the payload
+      const payload = {
+        contents: [
+          ...messages.map(msg => ({
+            role: msg.role === 'user' ? 'user' : 'model',
+            parts: [{ text: msg.content }]
+          })),
+          {
+            role: 'user',
+            parts: [{ text: query }]
+          }
+        ],
+        tools: [{ "google_search": {} }],
+        systemInstruction: {
+          parts: [{ text: systemPrompt }]
+        },
+      };
+
+      // --- Exponential Backoff Retry Logic ---
       let response;
       let retries = 0;
       const maxRetries = 5;
+      let delay = 1000;
+
       while (retries < maxRetries) {
         response = await fetch(apiUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
+          body: JSON.stringify(payload)
         });
 
-        if (response.ok) break;
+        if (response.ok) {
+          break; // Success
+        }
 
         if (response.status === 429 || response.status >= 500) {
-          const delay = Math.pow(2, retries) * 1000 + Math.random() * 1000;
-          await new Promise(resolve => setTimeout(resolve, delay));
+          // Throttling or server error, wait and retry
           retries++;
+          await new Promise(resolve => setTimeout(resolve, delay));
+          delay *= 2; // Exponential backoff
         } else {
-          // Break on other client-side errors
-          throw new Error(`HTTP error! status: ${response.status}`);
+          // Other client-side error (e.g., 400), don't retry
+          throw new Error(`API Error: ${response.status} ${response.statusText}`);
         }
       }
 
       if (!response.ok) {
-        throw new Error(`Failed to get response after ${maxRetries} retries. Status: ${response.status}`);
+        throw new Error(`API call failed after ${maxRetries} retries.`);
       }
 
       const result = await response.json();
@@ -85,123 +105,77 @@ export default function App() {
 
       if (candidate && candidate.content?.parts?.[0]?.text) {
         const text = candidate.content.parts[0].text;
+        let sources = [];
         
         // Extract grounding sources
-        let sources = [];
         const groundingMetadata = candidate.groundingMetadata;
         if (groundingMetadata && groundingMetadata.groundingAttributions) {
-          sources = groundingMetadata.groundingAttributions
-            .map(attribution => ({
-              uri: attribution.web?.uri,
-              title: attribution.web?.title,
-            }))
-            .filter(source => source.uri && source.title); // Ensure sources are valid
+            sources = groundingMetadata.groundingAttributions
+                .map(attribution => ({
+                    uri: attribution.web?.uri,
+                    title: attribution.web?.title,
+                }))
+                .filter(source => source.uri && source.title); // Ensure sources are valid
         }
 
-        return { text, sources };
+        const assistantMessage = { role: 'assistant', content: text, sources: sources };
+        setMessages(prev => [...prev, assistantMessage]);
 
       } else {
-        console.error("Unexpected API response structure:", result);
-        return { text: "Sorry, I encountered an error processing your request. Please try again.", sources: [] };
+        throw new Error("Invalid response structure from API.");
       }
 
     } catch (error) {
-      console.error('Error calling Gemini API:', error);
-      return { text: `Sorry, I'm having trouble connecting to my knowledge base. Error: ${error.message}`, sources: [] };
+      console.error(error);
+      const errorMessage = {
+        role: 'assistant',
+        content: "Sorry, I encountered an error trying to answer that. Please check the console or try again.",
+        sources: []
+      };
+      setMessages(prev => [...prev, errorMessage]);
     } finally {
       setIsLoading(false);
     }
   };
 
-  // --- Handle User Message Submission ---
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (!input.trim() || isLoading) return;
-
-    const userMessage = {
-      id: Date.now(),
-      role: 'user',
-      text: input,
-    };
-
-    // Add user message to state
-    setMessages((prev) => [...prev, userMessage]);
-    setInput('');
-
-    // Format chat history for the API
-    const apiChatHistory = [
-      ...messages.map(msg => ({
-        role: msg.role === 'bot' ? 'model' : 'user',
-        parts: [{ text: msg.text }],
-      })),
-      {
-        role: 'user',
-        parts: [{ text: input }],
-      }
-    ];
-
-    // Call API and get bot response
-    const botResponse = await callGeminiAPI(apiChatHistory);
-
-    const newBotMessage = {
-      id: Date.now() + 1,
-      role: 'bot',
-      text: botResponse.text,
-      sources: botResponse.sources || [],
-    };
-
-    // Add bot message to state
-    setMessages((prev) => [...prev, newBotMessage]);
-  };
-
   return (
-    <div className="flex flex-col h-screen bg-gray-100 font-sans">
-      {/* Header */}
-      <header className="bg-white border-b border-gray-200 p-4 shadow-sm">
-        <div className="container mx-auto flex items-center gap-3">
-          <Database className="w-8 h-8 text-blue-600" />
-          <div>
-            <h1 className="text-xl font-bold text-gray-800">Project Samarth</h1>
-            <p className="text-sm text-gray-500">Intelligent Q&A for Indian Agriculture & Climate Data</p>
-          </div>
-        </div>
+    <div className="flex flex-col h-screen bg-gray-900 text-white font-inter">
+      {/* --- Header --- */}
+      <header className="bg-gray-800 p-4 border-b border-gray-700 shadow-md">
+        <h1 className="text-xl font-bold flex items-center justify-center">
+          <Database className="mr-2 text-blue-400" />
+          Project Samarth
+        </h1>
       </header>
 
-      {/* Chat Area */}
-      <main className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">
-        <div className="container mx-auto max-w-3xl">
-          {messages.map((msg) => (
-            <ChatMessage key={msg.id} message={msg} />
-          ))}
-          {isLoading && <LoadingIndicator />}
-          <div ref={chatEndRef} />
-        </div>
+      {/* --- Chat Messages --- */}
+      <main className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4">
+        {messages.map((msg, index) => (
+          <ChatMessage key={index} message={msg} />
+        ))}
+        {isLoading && <LoadingIndicator />}
+        <div ref={messagesEndRef} />
       </main>
 
-      {/* Input Form */}
-      <footer className="bg-white border-t border-gray-200 p-4">
-        <div className="container mx-auto max-w-3xl">
-          <form onSubmit={handleSubmit} className="flex items-center gap-3">
-            <input
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Ask a complex question..."
-              className="flex-1 p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              disabled={isLoading}
-            />
-            <button
-              type="submit"
-              className="p-3 bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed flex items-center justify-center transition-colors"
-              disabled={isLoading || !input.trim()}
-            >
-              {isLoading ? (
-                <Loader2 className="w-6 h-6 animate-spin" />
-              ) : (
-                <Send className="w-6 h-6" />
-              )}
-            </button>
-          </form>
+      {/* --- Input Area --- */}
+      <footer className="bg-gray-800 p-4 border-t border-gray-700">
+        <div className="max-w-3xl mx-auto flex items-center space-x-2">
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyPress={(e) => e.key === 'Enter' && !isLoading && handleSend()}
+            placeholder="Ask a complex question..."
+            className="flex-1 p-3 bg-gray-700 rounded-lg border border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-400"
+            disabled={isLoading}
+          />
+          <button
+            onClick={handleSend}
+            disabled={isLoading}
+            className="p-3 bg-blue-600 rounded-lg text-white hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors"
+          >
+            {isLoading ? <Loader2 className="animate-spin" /> : <Send />}
+          </button>
         </div>
       </footer>
     </div>
@@ -210,60 +184,46 @@ export default function App() {
 
 // --- Chat Message Component ---
 function ChatMessage({ message }) {
-  const { role, text, sources } = message;
-  const isBot = role === 'bot';
+  const { role, content, sources } = message;
+  const isUser = role === 'user';
 
   return (
-    <div className={`flex ${isBot ? 'justify-start' : 'justify-end'} mb-4`}>
-      <div
-        className={`flex max-w-xl rounded-xl shadow-md ${
-          isBot ? 'bg-white' : 'bg-blue-500 text-white'
-        }`}
-      >
-        <div
-          className={`p-2 ${
-            isBot ? 'bg-gray-100' : 'bg-blue-600'
-          } rounded-l-xl flex items-center justify-center`}
-        >
-          {isBot ? (
-            <Bot className="w-6 h-6 text-blue-600" />
+    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+      <div className={`max-w-xl lg:max-w-2xl px-5 py-3 rounded-xl shadow-md ${isUser ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-200'}`}>
+        <div className="flex items-center mb-2">
+          {isUser ? (
+            <User className="w-5 h-5 mr-2" />
           ) : (
-            <User className="w-6 h-6 text-white" />
+            <Bot className="w-5 h-5 mr-2" />
           )}
+          <span className="font-bold">{isUser ? 'You' : 'Samarth'}</span>
         </div>
-        <div className="p-4 rounded-r-xl">
-          {/* Format text to render paragraphs */}
-          <div className="whitespace-pre-wrap text-sm md:text-base">
-            {text.split('\n').map((line, i) => (
-              <p key={i}>{line}</p>
-            ))}
+        {/* We use dangerouslySetInnerHTML to render newlines as <br> tags. 
+            A more robust solution would parse markdown. */}
+        <p className="whitespace-pre-wrap" dangerouslySetInnerHTML={{ __html: content.replace(/\n/g, '<br />') }}></p>
+        
+        {/* --- Render Sources --- */}
+        {sources && sources.length > 0 && (
+          <div className="mt-4 pt-3 border-t border-gray-600">
+            <h4 className="text-sm font-semibold mb-2 text-gray-300">Sources:</h4>
+            <ul className="space-y-2">
+              {sources.map((source, index) => (
+                <li key={index} className="flex items-start">
+                  <LinkIcon className="w-4 h-4 mr-2 mt-1 text-blue-400 flex-shrink-0" />
+                  <a
+                    href={source.uri}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-blue-300 hover:underline truncate"
+                    title={source.uri}
+                  >
+                    {source.title || source.uri}
+                  </a>
+                </li>
+              ))}
+            </ul>
           </div>
-
-          {/* Display Sources */}
-          {isBot && sources && sources.length > 0 && (
-            <div className="mt-4 pt-3 border-t border-gray-200">
-              <h4 className="text-xs font-semibold text-gray-500 mb-2 uppercase">
-                Sources
-              </h4>
-              <ul className="space-y-2">
-                {sources.map((source, index) => (
-                  <li key={index} className="flex items-start gap-2">
-                    <LinkIcon className="w-3 h-3 text-gray-400 mt-1 flex-shrink-0" />
-                    <a
-                      href={source.uri}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs text-blue-600 hover:underline truncate"
-                      title={source.title}
-                    >
-                      {source.title || source.uri}
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
+        )}
       </div>
     </div>
   );
@@ -272,18 +232,18 @@ function ChatMessage({ message }) {
 // --- Loading Indicator ---
 function LoadingIndicator() {
   return (
-    <div className="flex justify-start mb-4">
-      <div className="flex max-w-xl rounded-xl shadow-md bg-white">
-        <div className="p-2 bg-gray-100 rounded-l-xl flex items-center justify-center">
-          <Bot className="w-6 h-6 text-blue-600" />
+    <div className="flex justify-start">
+      <div className="max-w-xl lg:max-w-2xl px-5 py-3 rounded-xl shadow-md bg-gray-700 text-gray-200">
+        <div className="flex items-center">
+          <Bot className="w-5 h-5 mr-2" />
+          <span className="font-bold">Samarth</span>
         </div>
-        <div className="p-4 rounded-r-xl flex items-center gap-3">
-          <Loader2 className="w-5 h-5 text-gray-500 animate-spin" />
-          <span className="text-sm text-gray-500">
-            Synthesizing answer from live data...
-          </span>
+        <div className="flex items-center justify-center pt-3">
+          <Loader2 className="w-5 h-5 animate-spin text-blue-400" />
+          <span className="ml-2 text-sm text-gray-300">Synthesizing answer...</span>
         </div>
       </div>
     </div>
   );
 }
+
