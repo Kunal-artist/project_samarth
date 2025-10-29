@@ -1,4 +1,4 @@
-# Project Samarth 🌾🤖
+# Project Samarth 🌾
 
 **An intelligent Q&A system for India's agricultural economy and climate patterns — powered by data.gov.in and Gemini AI.**
 
@@ -90,7 +90,7 @@ npm start
 
 ## Submission (Build For Bharat 2026)
 
-2-Min Loom Demo: [Watch Here] (Add after recording)
+2-Min Loom Demo: [Watch Here](https://www.loom.com/share/726d6f5fed2d4915bdea55fde2e21eb2)
 Live Prototype: https://project-samarth.vercel.app/
 Code: This repo
 
