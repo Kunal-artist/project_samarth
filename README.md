@@ -7,8 +7,8 @@
 
 ---
 
-## Live Prototype (Bonus Link)
-**Try it now:** [https://project-samarth.vercel.app/](https://project-samarth.vercel.app/)
+## Live Prototype 
+**Try it now:** 
 
 Ask questions like:
 > _"Compare rainfall in Maharashtra & Gujarat last 5 years + top 3 rice crops"_  
